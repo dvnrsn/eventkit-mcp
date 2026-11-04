@@ -7,8 +7,6 @@ A small command-line tool and MCP server that let Claude (or any MCP client) rea
   <img src="docs/diagram-light.svg" width="820" alt="Architecture: Claude or another MCP client talks to the MCP server (mcp/server.py) over stdio. The server refuses changes unless the event's line still matches, a series change has its title, and the calendar is allowed, then runs bin/cal. bin/cal opens EventKit Helper, a tiny app that holds its own Calendar and Reminders permission and uses EventKit, the macOS framework Apple's apps use, to reach Calendar and Reminders across iCloud, Google, Exchange, CalDAV, and other accounts. The client's approval prompt, where you approve each change, is the backstop.">
 </picture>
 
-![Adding an event with bin/cal, then listing it](docs/demo.gif)
-
 ## Why
 
 Claude has no built-in access to Apple Calendar or Reminders. Its calendar connectors work with cloud services like Google Calendar, but none reach the Calendar and Reminders apps on your Mac, and Reminders lives only in Apple's ecosystem. This project fills that gap locally through EventKit, the same framework Apple's own apps use.
@@ -125,6 +123,13 @@ All settings are environment variables, read by both `bin/cal` and the MCP serve
 | `EVENTKIT_BUNDLE_ID` | Bundle ID for the helper app, read by `bin/build-helper`. Letters, digits, dots, and hyphens only. |
 
 ## Using bin/cal
+
+```console
+$ bin/cal add "Coffee with Sam" 2026-11-20 10:00 1h --alert 15m
+Added Fri Nov 20 10:00-11:00 Coffee with Sam (Home) [id: E2226C25-9510-49F9-A9CC-C2F70E66CB67:90F61F11-8B85-4FF9-A7DD-2BEEE90135F0]
+$ bin/cal list 2026-11-20 --match "Coffee"
+- 10:00-11:00 Coffee with Sam (Home)
+```
 
 Run `bin/cal` with no arguments for the full usage. Dates are `YYYY-MM-DD`, times are `7pm`, `7:30pm`, or `19:30`, and durations are `2h`, `90m`, or `1h30m`.
 
