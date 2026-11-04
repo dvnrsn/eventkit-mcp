@@ -19,7 +19,8 @@ Register it with an MCP client rather than running it by hand.
 Environment:
   EVENTKIT_MCP_SIGNATURE     text appended to the notes of events added through the server;
                              set it to an empty string to turn signing off
-  EVENTKIT_CALENDARS         comma-separated calendar names that list_events may show
+  EVENTKIT_CALENDARS         comma-separated calendars (Name or Account/Name) that the tools
+                             may list, add to, edit, or delete from
   EVENTKIT_DEFAULT_CALENDAR  calendar for add_event when none is given
   EVENTKIT_DEFAULT_LIST      reminder list for add_reminder when none is given
 """
@@ -34,7 +35,8 @@ INSTRUCTIONS = (
     "To change or delete an event, first call list_events with match and ids=true to get its ID; "
     "if zero or several events match, ask instead of guessing. Pass that event's line from the "
     "listing as `event` so the user can see what is being changed; the server refuses if it doesn't match. "
-    "For repeating events, only change one occurrence unless the user explicitly says the whole series. "
+    "For repeating events, only change one occurrence unless the user explicitly says the whole series; "
+    "series=true also needs confirm_series set to the event's exact title. "
     "Reminders are found the same way: list_reminders with match and ids=true, then edit_reminder "
     "or delete_reminder by ID, passing the reminder's line as `reminder`."
 )
@@ -57,7 +59,16 @@ DETAILS = {
     "calendar": {"type": "string", "description": "Calendar name from list_calendars; defaults to the default calendar"},
     "location": {"type": "string", "description": "Empty string clears it"},
     "notes": {"type": "string", "description": "Empty string clears it"},
-    "alert": {"type": "string", "description": "Alert before start, e.g. 15m or 1h; 'none' removes alerts"},
+    "alert": {"type": "string", "description": "Alert before start, e.g. 15m or 1h; replaces existing alerts; 'none' removes them"},
+}
+EDIT_DETAILS = {**DETAILS, "notes": {"type": "string", "description": "Replaces the existing notes; empty string clears them"}}
+SERIES = {
+    "type": "boolean",
+    "description": "Also apply to all future occurrences. Needs confirm_series; only when the user explicitly asks for the whole series",
+}
+CONFIRM_SERIES = {
+    "type": "string",
+    "description": "Required with series=true: the event's exact current title, as a check that the whole series is meant",
 }
 
 TOOLS = [
@@ -119,8 +130,9 @@ TOOLS = [
                 "time": TIME,
                 "duration": DURATION,
                 "all_day": {"type": "boolean"},
-                **DETAILS,
-                "series": {"type": "boolean", "description": "Also change all future occurrences"},
+                **EDIT_DETAILS,
+                "series": SERIES,
+                "confirm_series": CONFIRM_SERIES,
             },
             "required": ["event", "id", "date"],
         },
@@ -136,7 +148,8 @@ TOOLS = [
                 "event": EVENT_LINE,
                 "id": {"type": "string"},
                 "date": {**DATE, "description": "The day of the occurrence being deleted"},
-                "series": {"type": "boolean", "description": "Also delete all future occurrences"},
+                "series": SERIES,
+                "confirm_series": CONFIRM_SERIES,
             },
             "required": ["event", "id", "date"],
         },
@@ -201,7 +214,7 @@ TOOLS = [
                 "clear_due": {"type": "boolean", "description": "Remove the due date"},
                 "completed": {"type": "boolean", "description": "true marks it done, false reopens it"},
                 "list": {"type": "string"},
-                "notes": {"type": "string"},
+                "notes": {"type": "string", "description": "Replaces the existing notes; empty string clears them"},
                 "priority": PRIORITY,
             },
             "required": ["reminder", "id"],
@@ -222,6 +235,10 @@ TOOLS = [
 ]
 
 
+def is_true(a, key):
+    return a.get(key) is True
+
+
 def reminder_detail_args(a):
     args = []
     for key in ("list", "notes", "priority"):
@@ -238,89 +255,98 @@ def detail_args(a):
     return args
 
 
+def series_args(a):
+    if not is_true(a, "series"):
+        return []
+    return ["--series", "--confirm-series", a["confirm_series"]]
+
+
 def cal_args(name, a):
+    """Return bin/cal's argv with positional values after a bare `--`, so a title like `--all-day` stays a title."""
+    command, flags, positional = cal_parts(name, a)
+    return [command, *flags, "--", *positional]
+
+
+def cal_parts(name, a):
     if name == "list_events":
-        args = ["list", a.get("start") or date.today().isoformat()]
+        flags = []
         if a.get("end"):
-            args += ["--to", a["end"]]
+            flags += ["--to", a["end"]]
         if a.get("match"):
-            args += ["--match", a["match"]]
-        if a.get("ids"):
-            args.append("--ids")
-        return args
+            flags += ["--match", a["match"]]
+        if is_true(a, "ids"):
+            flags.append("--ids")
+        return "list", flags, [a.get("start") or date.today().isoformat()]
     if name == "list_calendars":
-        return ["calendars"]
+        return "calendars", [], []
     if name == "add_event":
-        args = ["add", a["title"], a["date"]]
+        positional = [a["title"], a["date"]]
         if a.get("time"):
-            args.append(a["time"])
+            positional.append(a["time"])
             if a.get("duration"):
-                args.append(a["duration"])
-        args += detail_args(a)
+                positional.append(a["duration"])
+        flags = detail_args(a)
         if a.get("repeat"):
-            args += ["--repeat", a["repeat"]]
+            flags += ["--repeat", a["repeat"]]
             if a.get("until"):
-                args += ["--until", a["until"]]
-        return args
+                flags += ["--until", a["until"]]
+        return "add", flags, positional
     if name == "edit_event":
-        args = ["edit", a["id"], a["date"]]
+        flags = []
         for key, flag in [("title", "--title"), ("new_date", "--date"), ("time", "--time"), ("duration", "--duration")]:
             if a.get(key):
-                args += [flag, a[key]]
-        if a.get("all_day"):
-            args.append("--all-day")
-        args += detail_args(a)
-        if a.get("series"):
-            args.append("--series")
-        return args
+                flags += [flag, a[key]]
+        if is_true(a, "all_day"):
+            flags.append("--all-day")
+        flags += detail_args(a) + series_args(a)
+        return "edit", flags, [a["id"], a["date"]]
     if name == "delete_event":
-        args = ["delete", a["id"], a["date"]]
-        if a.get("series"):
-            args.append("--series")
-        return args
+        return "delete", series_args(a), [a["id"], a["date"]]
     if name == "list_reminders":
-        args = ["reminders"]
+        flags = []
         if a.get("list"):
-            args += ["--list", a["list"]]
+            flags += ["--list", a["list"]]
         if a.get("due_by"):
-            args += ["--due-by", a["due_by"]]
-        if a.get("completed"):
-            args.append("--completed")
+            flags += ["--due-by", a["due_by"]]
+        if is_true(a, "completed"):
+            flags.append("--completed")
         if a.get("match"):
-            args += ["--match", a["match"]]
-        if a.get("ids"):
-            args.append("--ids")
-        return args
+            flags += ["--match", a["match"]]
+        if is_true(a, "ids"):
+            flags.append("--ids")
+        return "reminders", flags, []
     if name == "list_reminder_lists":
-        return ["reminder-lists"]
+        return "reminder-lists", [], []
     if name == "add_reminder":
-        args = ["remind", a["title"]]
+        positional = [a["title"]]
         if a.get("due_date"):
-            args.append(a["due_date"])
+            positional.append(a["due_date"])
             if a.get("time"):
-                args.append(a["time"])
-        args += reminder_detail_args(a)
+                positional.append(a["time"])
+        flags = reminder_detail_args(a)
         if a.get("repeat"):
-            args += ["--repeat", a["repeat"]]
+            flags += ["--repeat", a["repeat"]]
             if a.get("until"):
-                args += ["--until", a["until"]]
-        return args
+                flags += ["--until", a["until"]]
+        return "remind", flags, positional
     if name == "edit_reminder":
-        args = ["edit-reminder", a["id"]]
+        flags = []
         if a.get("title"):
-            args += ["--title", a["title"]]
-        if a.get("clear_due"):
-            args.append("--no-due")
+            flags += ["--title", a["title"]]
+        if is_true(a, "clear_due"):
+            flags.append("--no-due")
         else:
             if a.get("due_date"):
-                args += ["--due", a["due_date"]]
+                flags += ["--due", a["due_date"]]
             if a.get("time"):
-                args += ["--time", a["time"]]
-        if "completed" in a:
-            args.append("--done" if a["completed"] else "--undone")
-        return args + reminder_detail_args(a)
+                flags += ["--time", a["time"]]
+        if a.get("completed") is True:
+            flags.append("--done")
+        elif a.get("completed") is False:
+            flags.append("--undone")
+        return "edit-reminder", flags + reminder_detail_args(a), [a["id"]]
     if name == "delete_reminder":
-        return ["delete-reminder", a["id"]]
+        return "delete-reminder", [], [a["id"]]
     raise KeyError(name)
 
 
@@ -343,7 +369,7 @@ def listed_line(listing_args, item_id):
         code, text = run_cal(args)
         if code != 0:
             raise LookupError(text)
-        for line in text.splitlines():
+        for line in text.split("\n"):
             if line.endswith(suffix):
                 return line.removeprefix("- ").removesuffix(suffix)
     return None
@@ -357,17 +383,31 @@ def mismatch(name, a):
     """Check that the event or reminder the caller described is the one the ID points at."""
     if name in ("edit_event", "delete_event"):
         kind, claimed = "event", a["event"]
-        current = listed_line([["list", a["date"], "--ids"]], a["id"])
+        current = listed_line([["list", "--ids", "--", a["date"]]], a["id"])
     elif name in ("edit_reminder", "delete_reminder"):
         kind, claimed = "reminder", a["reminder"]
         current = listed_line([["reminders", "--ids"], ["reminders", "--completed", "--ids"]], a["id"])
     else:
         return None
+    on_day = f" on {a['date']}" if kind == "event" else ""
     if current is None:
-        return f"No {kind} with that ID" + (f" on {a['date']}." if kind == "event" else ".") + " Nothing changed."
+        return f"No {kind} with that ID{on_day}. Nothing changed."
     if normalized(current) != normalized(claimed):
-        return f"That ID is not the {kind} you described. It is currently:\n{current}\nNothing changed."
+        return f"That ID is not the {kind} you described. Its current line{on_day} is:\n{current}\nNothing changed."
     return None
+
+
+def series_refusal(name, a):
+    if name not in ("edit_event", "delete_event") or not is_true(a, "series"):
+        return None
+    if a.get("confirm_series"):
+        return None
+    verb = "change" if name == "edit_event" else "delete"
+    return (
+        f"series=true would {verb} the {a.get('date')} occurrence and every future occurrence, not just one. "
+        "Only do that if the user explicitly asked for the whole series, then call again with confirm_series "
+        "set to the event's exact title. Nothing changed."
+    )
 
 
 def call_tool(name, arguments):
@@ -375,6 +415,9 @@ def call_tool(name, arguments):
     try:
         if name == "add_event":
             a = signed(a)
+        problem = series_refusal(name, a)
+        if problem:
+            return {"content": [{"type": "text", "text": problem}], "isError": True}
         args = cal_args(name, a)
         problem = mismatch(name, a)
     except KeyError as missing:
@@ -406,6 +449,11 @@ def handle(message):
     raise LookupError(method)
 
 
+def reply(message_id, **body):
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": message_id, **body}) + "\n")
+    sys.stdout.flush()
+
+
 def main():
     if any(arg in ("-h", "--help") for arg in sys.argv[1:]):
         print(USAGE, end="")
@@ -413,17 +461,22 @@ def main():
     for line in sys.stdin:
         if not line.strip():
             continue
-        message = json.loads(line)
+        try:
+            message = json.loads(line)
+        except ValueError as error:
+            reply(None, error={"code": -32700, "message": f"Parse error: {error}"})
+            continue
+        if not isinstance(message, dict):
+            reply(None, error={"code": -32600, "message": "Invalid request"})
+            continue
         if "id" not in message:
             continue
         try:
-            reply = {"jsonrpc": "2.0", "id": message["id"], "result": handle(message)}
+            reply(message["id"], result=handle(message))
         except LookupError as method:
-            reply = {"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": f"Unknown method {method}"}}
+            reply(message["id"], error={"code": -32601, "message": f"Unknown method {method}"})
         except Exception as error:
-            reply = {"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32603, "message": str(error)}}
-        sys.stdout.write(json.dumps(reply) + "\n")
-        sys.stdout.flush()
+            reply(message["id"], error={"code": -32603, "message": str(error)})
 
 
 if __name__ == "__main__":

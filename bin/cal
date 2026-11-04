@@ -16,7 +16,7 @@ trap 'rm -rf "$tmp"' EXIT
 touch "$tmp/out" "$tmp/err"
 
 # `open` starts the app with a clean environment, so settings are passed explicitly.
-env_args=(--env "EVENTKIT_STATUS_FILE=$tmp/status")
+env_args=(--env "EVENTKIT_STATUS_FILE=$tmp/status" --env "EVENTKIT_PID_FILE=$tmp/pid")
 for name in EVENTKIT_CALENDARS EVENTKIT_DEFAULT_CALENDAR EVENTKIT_DEFAULT_LIST; do
   if [[ -n "${!name:-}" ]]; then
     env_args+=(--env "$name=${!name}")
@@ -31,7 +31,13 @@ for _ in $(seq 1 3000); do
   sleep 0.1
 done
 if [[ ! -s "$tmp/status" ]]; then
-  echo "EventKit Helper didn't finish within 5 minutes." >&2
+  pid="$(cat "$tmp/pid" 2>/dev/null || true)"
+  command_name="$(ps -p "${pid:-0}" -o comm= 2>/dev/null || true)"
+  if [[ "$pid" =~ ^[0-9]+$ && "${command_name##*/}" == eventkit-cal ]] && kill "$pid" 2>/dev/null; then
+    echo "EventKit Helper didn't finish within 5 minutes, so it was stopped. If a permission prompt was showing, answer it and run the command again." >&2
+  else
+    echo "EventKit Helper didn't finish within 5 minutes. It may still be waiting on a permission prompt, and the change may still happen once that prompt is answered, so check before running it again." >&2
+  fi
   exit 1
 fi
 

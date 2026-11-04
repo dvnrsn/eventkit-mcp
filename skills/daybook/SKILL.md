@@ -29,7 +29,7 @@ Planner repo: `~/planner` (edit this line if yours lives elsewhere). It holds `d
 - **Add:** build `bin/cal add "<Title>" <YYYY-MM-DD> [<time> [<duration>]]` plus any of `--calendar`, `--location`, `--notes`, `--alert 15m`, `--repeat weekly [--until DATE]`. No time means all-day; no duration means 1h.
 - **Move, change, cancel:** first run `list <DATE> --match "<words>" --ids` to get the event's ID. If it matches zero or several events, show what you found and ask; never guess. Then `edit <ID> <DATE>` with `--date`, `--time`, `--duration`, `--title`, `--all-day`, or detail options, or `delete <ID> <DATE>`.
 - **Overlaps:** when adding something that overlaps an existing event, point it out before asking for the yes.
-- **Repeating events:** change or delete only that occurrence. Add `--series` (this and all future occurrences) only when the user says so explicitly.
+- **Repeating events:** change or delete only that occurrence. Add `--series` (this and all future occurrences) only when the user says so explicitly, together with `--confirm-series "<exact title>"` so the helper refuses if the ID points at a different event.
 - **Always confirm:** before any `add`, `edit`, or `delete`, show the exact event (title, day, time, calendar, and for edits the before and after) and wait for a yes.
 - Afterwards, if that day's page exists, rerun `list` for it and refresh its **Schedule**.
 

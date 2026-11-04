@@ -6,8 +6,9 @@ usage:
   bin/cal list [DATE] [--to DATE] [--match TEXT] [--ids]
   bin/cal calendars
   bin/cal add "Title" DATE [TIME [DURATION]] [details] [--repeat FREQ [--every N] [--until DATE]]
-  bin/cal edit ID DATE [--title T] [--date DATE] [--time TIME] [--duration D] [--all-day] [details] [--series]
-  bin/cal delete ID DATE [--series]
+  bin/cal edit ID DATE [--title T] [--date DATE] [--time TIME] [--duration D] [--all-day] [details]
+                       [--series [--confirm-series TITLE]]
+  bin/cal delete ID DATE [--series [--confirm-series TITLE]]
 
   bin/cal reminders [--list NAME] [--due-by DATE] [--completed] [--match TEXT] [--ids]
   bin/cal reminder-lists
@@ -20,14 +21,18 @@ usage:
   TIME      7pm, 7:30pm, or 19:30; omit on add for an all-day event
   DURATION  2h, 90m, or 1h30m; defaults to 1h
   details   --calendar NAME  --location TEXT  --notes TEXT  --alert 15m|none
+            on edit, --notes replaces the existing notes and --alert replaces existing alerts
   FREQ      daily, weekly, monthly, or yearly; --every 2 with weekly is every other week
   ID DATE   from `list --ids`; DATE picks the occurrence of a repeating event
-  --series  edit or delete this and all future occurrences, not just this one
+  --series  edit or delete this and all future occurrences, not just this one;
+            --confirm-series refuses unless TITLE is exactly the event's current title
+  --        everything after a bare -- is positional, for titles that start with --
   P         high, medium, low, or none
   reminders lists incomplete reminders; --completed shows ones finished in the last 7 days
 
 Environment:
-  EVENTKIT_CALENDARS="A,B"         limit list to those calendars
+  EVENTKIT_CALENDARS="A,Acct/B"    only these calendars (by name, or Account/Name) can be
+                                   listed, added to, edited, or deleted from
   EVENTKIT_DEFAULT_CALENDAR=NAME   calendar for add when --calendar is not given
   EVENTKIT_DEFAULT_LIST=NAME       reminder list for remind when --list is not given
 """
@@ -41,6 +46,10 @@ func finish(_ code: Int32) -> Never {
     exit(code)
 }
 
+if let path = ProcessInfo.processInfo.environment["EVENTKIT_PID_FILE"] {
+    try? "\(getpid())".write(toFile: path, atomically: true, encoding: .utf8)
+}
+
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
     finish(1)
@@ -49,7 +58,7 @@ func fail(_ message: String) -> Never {
 let valueFlags: Set<String> = [
     "--to", "--match", "--title", "--date", "--time", "--duration",
     "--calendar", "--location", "--notes", "--alert", "--repeat", "--every", "--until",
-    "--list", "--due-by", "--due", "--priority",
+    "--list", "--due-by", "--due", "--priority", "--confirm-series",
 ]
 let switchFlags: Set<String> = ["--ids", "--all-day", "--series", "--completed", "--no-due", "--done", "--undone"]
 
@@ -57,9 +66,14 @@ var positional: [String] = []
 var options: [String: String] = [:]
 var switches: Set<String> = []
 var raw = Array(CommandLine.arguments.dropFirst())
+var onlyPositional = false
 while !raw.isEmpty {
     let arg = raw.removeFirst()
-    if valueFlags.contains(arg) {
+    if onlyPositional {
+        positional.append(arg)
+    } else if arg == "--" {
+        onlyPositional = true
+    } else if valueFlags.contains(arg) {
         guard !raw.isEmpty else { fail("\(arg) needs a value.\n" + usage) }
         options[arg] = raw.removeFirst()
     } else if switchFlags.contains(arg) {
@@ -76,19 +90,28 @@ let args = Array(positional.dropFirst())
 let calendar = Calendar.current
 let environment = ProcessInfo.processInfo.environment
 
-func parseDay(_ text: String) -> Date {
+func fixedFormatter(_ format: String) -> DateFormatter {
     let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd"
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.timeZone = TimeZone.current
+    formatter.dateFormat = format
+    return formatter
+}
+
+func parseDay(_ text: String) -> Date {
+    let formatter = fixedFormatter("yyyy-MM-dd")
     guard let day = formatter.date(from: text) else { fail("Can't read date \"\(text)\"; use YYYY-MM-DD.") }
     return day
 }
 
+func formatDay(_ day: Date) -> String {
+    fixedFormatter("yyyy-MM-dd").string(from: day)
+}
+
 func parseTime(_ text: String, on day: Date) -> Date {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
     for format in ["h:mma", "ha", "H:mm"] {
-        formatter.dateFormat = format
-        if let time = formatter.date(from: text.uppercased()) {
+        if let time = fixedFormatter(format).date(from: text.uppercased()) {
             let parts = calendar.dateComponents([.hour, .minute], from: time)
             return calendar.date(bySettingHour: parts.hour!, minute: parts.minute!, second: 0, of: day)!
         }
@@ -134,10 +157,63 @@ func requireAccess(to entity: EKEntityType) {
     }
 }
 
+// Titles, locations, and calendar names are printed one item per line, and the MCP server
+// compares those lines, so no stored value may break a line.
+func oneLine(_ text: String) -> String {
+    let scalars = text.unicodeScalars.map { scalar -> Unicode.Scalar in
+        CharacterSet.newlines.contains(scalar) || scalar.properties.generalCategory == .control ? " " : scalar
+    }
+    return String(String.UnicodeScalarView(scalars))
+}
+
+func calendarLabel(_ cal: EKCalendar) -> String {
+    "\(cal.source.title)/\(cal.title)"
+}
+
+func calendarMatches(_ cal: EKCalendar, _ name: String) -> Bool {
+    cal.title == name || calendarLabel(cal) == name
+}
+
+var cachedAllowedCalendars: [EKCalendar]??
+
+// nil means EVENTKIT_CALENDARS is unset, so every calendar is allowed.
+func allowedCalendars() -> [EKCalendar]? {
+    if let cached = cachedAllowedCalendars { return cached }
+    let entries = (environment["EVENTKIT_CALENDARS"] ?? "")
+        .split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+    var result: [EKCalendar]? = nil
+    if !entries.isEmpty {
+        let all = store.calendars(for: .event)
+        let unmatched = entries.filter { entry in !all.contains { calendarMatches($0, entry) } }
+        if !unmatched.isEmpty {
+            let available = all.map { "  " + oneLine(calendarLabel($0)) }.sorted().joined(separator: "\n")
+            fail("EVENTKIT_CALENDARS names no calendar for: \(unmatched.joined(separator: ", ")). "
+                + "Use Name or Account/Name. Available calendars:\n" + available)
+        }
+        result = all.filter { cal in entries.contains { calendarMatches(cal, $0) } }
+    }
+    cachedAllowedCalendars = .some(result)
+    return result
+}
+
+func requireAllowed(_ cal: EKCalendar) {
+    guard let allowed = allowedCalendars() else { return }
+    guard allowed.contains(where: { $0.calendarIdentifier == cal.calendarIdentifier }) else {
+        fail("Calendar \"\(oneLine(calendarLabel(cal)))\" is outside EVENTKIT_CALENDARS. Nothing changed.")
+    }
+}
+
 func writableCalendar(named name: String) -> EKCalendar {
-    guard let match = store.calendars(for: .event).first(where: { $0.title == name && $0.allowsContentModifications }) else {
+    let matches = store.calendars(for: .event).filter { calendarMatches($0, name) && $0.allowsContentModifications }
+    guard let match = matches.first else {
         fail("No writable calendar named \"\(name)\". See bin/cal calendars.")
     }
+    guard matches.count == 1 else {
+        fail("Several writable calendars are named \"\(name)\"; use Account/Name. See bin/cal calendars.")
+    }
+    requireAllowed(match)
     return match
 }
 
@@ -145,9 +221,26 @@ func occurrence(id: String, on day: Date) -> EKEvent {
     let start = calendar.startOfDay(for: day)
     let predicate = store.predicateForEvents(withStart: start, end: nextDay(start), calendars: nil)
     guard let event = store.events(matching: predicate).first(where: { $0.eventIdentifier == id }) else {
-        fail("No event with that ID on that date. Run bin/cal list DATE --ids to find it.")
+        fail("No event with that ID on \(formatDay(start)). Run bin/cal list DATE --ids to find it.")
     }
+    requireAllowed(event.calendar)
     return event
+}
+
+func requireSeriesConfirmation(_ event: EKEvent) {
+    guard switches.contains("--series"), let confirmed = options["--confirm-series"] else { return }
+    let title = oneLine(event.title ?? "(untitled)")
+    guard confirmed == title else {
+        fail("--confirm-series \"\(confirmed)\" is not this event's title \"\(title)\". Nothing changed.")
+    }
+}
+
+func targetNote(_ repeats: Bool, _ day: Date) -> String {
+    guard repeats else { return "" }
+    let label = formatDay(day)
+    return switches.contains("--series")
+        ? " (the \(label) occurrence and all after it)"
+        : " (only the \(label) occurrence)"
 }
 
 let timeFormat = DateFormatter()
@@ -158,16 +251,16 @@ dayLabel.dateFormat = "EEE MMM d"
 func describe(_ event: EKEvent, withDay: Bool = false, withID: Bool = false) -> String {
     var line = "- "
     if withDay { line += dayLabel.string(from: event.startDate) + " " }
-    let title = event.title ?? "(untitled)"
+    let title = oneLine(event.title ?? "(untitled)")
     if event.isAllDay {
         line += "All day: \(title)"
     } else {
         line += "\(timeFormat.string(from: event.startDate))-\(timeFormat.string(from: event.endDate)) \(title)"
     }
     if let location = event.location, !location.isEmpty {
-        line += " @ " + location.split(whereSeparator: \.isNewline).joined(separator: ", ")
+        line += " @ " + oneLine(location.split(whereSeparator: \.isNewline).joined(separator: ", "))
     }
-    line += " (\(event.calendar.title)"
+    line += " (\(oneLine(event.calendar.title))"
     if event.hasRecurrenceRules { line += ", repeats" }
     line += ")"
     if withID { line += " [id: \(event.eventIdentifier!)]" }
@@ -206,12 +299,8 @@ func list() {
     let start = calendar.startOfDay(for: args.first.map(parseDay) ?? Date())
     let last = options["--to"].map(parseDay) ?? start
     guard last >= start else { fail("--to is before the start date.") }
-    let wanted = environment["EVENTKIT_CALENDARS"]?
-        .split(separator: ",")
-        .map { $0.trimmingCharacters(in: .whitespaces) }
-    let calendars = wanted.map { names in store.calendars(for: .event).filter { names.contains($0.title) } }
     var events = store
-        .events(matching: store.predicateForEvents(withStart: start, end: nextDay(last), calendars: calendars))
+        .events(matching: store.predicateForEvents(withStart: start, end: nextDay(last), calendars: allowedCalendars()))
         .sorted { $0.startDate < $1.startDate }
     if let text = options["--match"] {
         events = events.filter { ($0.title ?? "").localizedCaseInsensitiveContains(text) }
@@ -226,7 +315,7 @@ func list() {
 func listCalendars() {
     let defaultID = store.defaultCalendarForNewEvents?.calendarIdentifier
     for cal in store.calendars(for: .event).sorted(by: { $0.source.title + $0.title < $1.source.title + $1.title }) {
-        var line = "- \(cal.title) (\(cal.source.title))"
+        var line = "- \(oneLine(cal.title)) (\(oneLine(cal.source.title)))"
         if !cal.allowsContentModifications { line += ", read-only" }
         if cal.calendarIdentifier == defaultID { line += ", default" }
         print(line)
@@ -254,6 +343,7 @@ func add() {
         event.endDate = day
     }
     applyDetails(to: event)
+    requireAllowed(event.calendar)
     if let rule = recurrenceRule() { event.addRecurrenceRule(rule) }
     save(event)
     print("Added " + describe(event, withDay: true, withID: true).dropFirst(2))
@@ -261,7 +351,10 @@ func add() {
 
 func edit() {
     guard args.count == 2 else { fail(usage) }
-    let event = occurrence(id: args[0], on: parseDay(args[1]))
+    let day = parseDay(args[1])
+    let event = occurrence(id: args[0], on: day)
+    requireSeriesConfirmation(event)
+    let repeats = event.hasRecurrenceRules
     if let title = options["--title"] { event.title = title }
 
     let newDay = options["--date"].map(parseDay)
@@ -295,20 +388,22 @@ func edit() {
 
     applyDetails(to: event)
     save(event)
-    print("Updated " + describe(event, withDay: true, withID: true).dropFirst(2))
+    print("Updated " + describe(event, withDay: true, withID: true).dropFirst(2) + targetNote(repeats, day))
 }
 
 func delete() {
     guard args.count == 2 else { fail(usage) }
-    let event = occurrence(id: args[0], on: parseDay(args[1]))
-    let summary = describe(event, withDay: true).dropFirst(2)
+    let day = parseDay(args[1])
+    let event = occurrence(id: args[0], on: day)
+    requireSeriesConfirmation(event)
+    let summary = describe(event, withDay: true).dropFirst(2) + targetNote(event.hasRecurrenceRules, day)
     let span: EKSpan = switches.contains("--series") ? .futureEvents : .thisEvent
     do {
         try store.remove(event, span: span)
     } catch {
         fail("Couldn't delete the event: \(error.localizedDescription)")
     }
-    print("Deleted " + summary + (span == .futureEvents ? " and its future occurrences" : ""))
+    print("Deleted " + summary)
 }
 
 // MARK: Reminders
@@ -369,7 +464,7 @@ func applyReminderDetails(to reminder: EKReminder) {
 
 func describe(_ reminder: EKReminder, withID: Bool = false) -> String {
     var line = reminder.isCompleted ? "- [x] " : "- [ ] "
-    line += reminder.title ?? "(untitled)"
+    line += oneLine(reminder.title ?? "(untitled)")
     if let due = dueDate(of: reminder) {
         line += " (due \(dayLabel.string(from: due))"
         if hasDueTime(reminder) { line += " \(timeFormat.string(from: due))" }
@@ -381,7 +476,7 @@ func describe(_ reminder: EKReminder, withID: Bool = false) -> String {
     case 6...9: line += " !low"
     default: break
     }
-    line += " (\(reminder.calendar.title)"
+    line += " (\(oneLine(reminder.calendar.title))"
     if reminder.hasRecurrenceRules { line += ", repeats" }
     line += ")"
     if withID { line += " [id: \(reminder.calendarItemIdentifier)]" }
@@ -432,7 +527,7 @@ func listReminders() {
 func listReminderLists() {
     let defaultID = store.defaultCalendarForNewReminders()?.calendarIdentifier
     for list in store.calendars(for: .reminder).sorted(by: { $0.source.title + $0.title < $1.source.title + $1.title }) {
-        var line = "- \(list.title) (\(list.source.title))"
+        var line = "- \(oneLine(list.title)) (\(oneLine(list.source.title)))"
         if !list.allowsContentModifications { line += ", read-only" }
         if list.calendarIdentifier == defaultID { line += ", default" }
         print(line)
