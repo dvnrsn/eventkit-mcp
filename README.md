@@ -2,6 +2,11 @@
 
 A small command-line tool and MCP server that let Claude (or any MCP client) read and change your macOS Calendar and Reminders, safely. It talks to Apple's EventKit directly, so it works with every account your Mac syncs (Google, Exchange, CalDAV, and the rest), and the helper itself talks to no service. Whatever it lists is sent on to the model your MCP client uses, like anything else in the conversation. The repo also includes an example markdown planner (day and week templates plus two Claude Code skills) that uses the tool to keep a daily schedule snapshot, carry over tasks, and plan the week.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagram-dark.svg">
+  <img src="docs/diagram-light.svg" width="820" alt="Architecture: Claude or another MCP client talks to the MCP server (mcp/server.py) over stdio. The server refuses changes unless the event's line still matches, a series change has its title, and the calendar is allowed, then runs bin/cal. bin/cal opens EventKit Helper, a tiny app that holds its own Calendar and Reminders permission and uses EventKit, the macOS framework Apple's apps use, to reach Calendar and Reminders across iCloud, Google, Exchange, CalDAV, and other accounts. The client's approval prompt, where you approve each change, is the backstop.">
+</picture>
+
 ## Why
 
 Claude has no built-in access to Apple Calendar or Reminders. Its calendar connectors work with cloud services like Google Calendar, but none reach the Calendar and Reminders apps on your Mac, and Reminders lives only in Apple's ecosystem. This project fills that gap locally through EventKit, the same framework Apple's own apps use.
