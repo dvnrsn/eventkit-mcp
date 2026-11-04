@@ -1,0 +1,34 @@
+#!/bin/bash
+# Builds "EventKit Helper.app" so macOS grants Calendar and Reminders access to it
+# rather than to whichever app (Terminal, Claude) happens to run bin/cal.
+set -euo pipefail
+
+root="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+app="$root/build/EventKit Helper.app"
+# Permissions are tied to the bundle ID; changing it means granting access again.
+bundle_id="${EVENTKIT_BUNDLE_ID:-local.eventkit-mcp.helper}"
+
+rm -rf "$app"
+mkdir -p "$app/Contents/MacOS"
+swiftc -O "$root/src/cal.swift" -o "$app/Contents/MacOS/eventkit-cal"
+
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>$bundle_id</string>
+  <key>CFBundleName</key><string>EventKit Helper</string>
+  <key>CFBundleExecutable</key><string>eventkit-cal</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>EventKit Helper reads and changes your calendar events when you ask it to.</string>
+  <key>NSRemindersFullAccessUsageDescription</key><string>EventKit Helper reads and changes your reminders when you ask it to.</string>
+</dict>
+</plist>
+PLIST
+
+codesign --force --sign - "$app"
+echo "Built $app"

@@ -1,0 +1,40 @@
+#!/bin/bash
+# Runs src/cal.swift inside "EventKit Helper.app" via `open`, so the Calendar
+# and Reminders permissions belong to that app no matter who calls this script.
+set -euo pipefail
+
+root="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+app="$root/build/EventKit Helper.app"
+binary="$app/Contents/MacOS/eventkit-cal"
+
+if [[ ! -x "$binary" || "$root/src/cal.swift" -nt "$binary" ]]; then
+  "$root/bin/build-helper" >&2
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+touch "$tmp/out" "$tmp/err"
+
+# `open` starts the app with a clean environment, so settings are passed explicitly.
+env_args=(--env "EVENTKIT_STATUS_FILE=$tmp/status")
+for name in EVENTKIT_CALENDARS EVENTKIT_DEFAULT_CALENDAR EVENTKIT_DEFAULT_LIST; do
+  if [[ -n "${!name:-}" ]]; then
+    env_args+=(--env "$name=${!name}")
+  fi
+done
+
+open -n -g "${env_args[@]}" --stdout "$tmp/out" --stderr "$tmp/err" "$app" --args "$@"
+
+# Long enough for the one-time permission prompt.
+for _ in $(seq 1 3000); do
+  [[ -s "$tmp/status" ]] && break
+  sleep 0.1
+done
+if [[ ! -s "$tmp/status" ]]; then
+  echo "EventKit Helper didn't finish within 5 minutes." >&2
+  exit 1
+fi
+
+cat "$tmp/out"
+cat "$tmp/err" >&2
+exit "$(cat "$tmp/status")"
