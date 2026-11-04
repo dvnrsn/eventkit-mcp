@@ -1,6 +1,6 @@
 # eventkit-mcp
 
-A small command-line tool and MCP server that let Claude (or any MCP client) read and change your macOS Calendar and Reminders, safely. It talks to Apple's EventKit directly, so it works with every account your Mac syncs (Google, Exchange, CalDAV, and the rest), and the helper itself talks to no service. Whatever it lists is sent on to the model your MCP client uses, like anything else in the conversation. The repo also includes an example markdown planner (day and week templates plus two Claude Code skills) that uses the tool to keep a daily schedule snapshot, carry over tasks, and plan the week.
+A small command-line tool and MCP server that let Claude (or any MCP client) read and change your Apple Calendar and Reminders on a Mac, safely. It talks to Apple's EventKit directly, so it works with every account your Mac syncs (Google, Exchange, CalDAV, and the rest), and the helper itself talks to no service. Whatever it lists is sent on to the model your MCP client uses, like anything else in the conversation. The repo also includes an example markdown planner (day and week templates plus two Claude Code skills) that uses the tool to keep a daily schedule snapshot, carry over tasks, and plan the week.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagram-dark.svg">
