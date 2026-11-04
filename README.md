@@ -4,7 +4,9 @@ A small command-line tool and MCP server that let Claude (or any MCP client) rea
 
 ## Why
 
-Letting an AI assistant touch a real calendar is useful and a little scary. A wrong guess about "next Thursday" or the wrong one of two "Dentist" events means a moved or deleted appointment you may not notice. This project keeps the useful part (Claude can look things up, add, move, and cancel events and reminders) and puts the risky parts behind guardrails that don't rely on the model behaving.
+Claude has no built-in access to Apple Calendar or Reminders. Its calendar connectors work with cloud services like Google Calendar, but none reach the Calendar and Reminders apps on your Mac, and Reminders lives only in Apple's ecosystem. This project fills that gap locally through EventKit, the same framework Apple's own apps use.
+
+Giving Claude that access is useful and a little scary. A wrong guess about "next Thursday" or the wrong one of two "Dentist" events means a moved or deleted appointment you may not notice. This project keeps the useful part (Claude can look things up, add, move, and cancel events and reminders) and puts the risky parts behind guardrails that don't rely on the model behaving.
 
 ## Guardrails
 
