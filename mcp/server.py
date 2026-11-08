@@ -10,6 +10,7 @@ from pathlib import Path
 CAL = Path(__file__).resolve().parent.parent / "bin" / "cal"
 PROTOCOL_VERSION = "2025-06-18"
 DEFAULT_SIGNATURE = "~ Added via eventkit-mcp"
+LAST_SIGNATURE = Path.home() / ".cache" / "eventkit-mcp" / "last-signature"
 
 USAGE = """usage: python3 mcp/server.py
 
@@ -18,7 +19,8 @@ Register it with an MCP client rather than running it by hand.
 
 Environment:
   EVENTKIT_MCP_SIGNATURE     text appended to the notes of events added through the server;
-                             set it to an empty string to turn signing off
+                             several lines rotate, one per event; an empty string turns
+                             signing off
   EVENTKIT_CALENDARS         comma-separated calendars (Name or Account/Name) that the tools
                              may list, add to, edit, or delete from
   EVENTKIT_DEFAULT_CALENDAR  calendar for add_event when none is given
@@ -361,8 +363,26 @@ def cal_parts(name, a):
     raise KeyError(name)
 
 
+def next_signature():
+    raw = os.environ.get("EVENTKIT_MCP_SIGNATURE", DEFAULT_SIGNATURE)
+    choices = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(choices) <= 1:
+        return choices[0] if choices else ""
+    try:
+        last = int(LAST_SIGNATURE.read_text())
+    except (OSError, ValueError):
+        last = -1
+    index = (last + 1) % len(choices)
+    try:
+        LAST_SIGNATURE.parent.mkdir(parents=True, exist_ok=True)
+        LAST_SIGNATURE.write_text(str(index))
+    except OSError:
+        pass
+    return choices[index]
+
+
 def signed(a):
-    signature = os.environ.get("EVENTKIT_MCP_SIGNATURE", DEFAULT_SIGNATURE).strip()
+    signature = next_signature()
     if not signature:
         return a
     notes = a.get("notes", "").strip()

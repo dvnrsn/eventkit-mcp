@@ -120,7 +120,7 @@ All settings are environment variables, read by both `bin/cal` and the MCP serve
 | `EVENTKIT_CALENDARS` | Comma-separated calendars to limit events to, e.g. to keep work calendars out. Each entry is a calendar name (`Personal`) or account and name (`Google/Personal`) when two accounts have a calendar of the same name. `list` shows only these, and `add`, `edit`, and `delete` refuse events and target calendars outside them. If an entry matches no calendar, event commands fail with the list of available calendars. Reminder lists aren't affected. |
 | `EVENTKIT_DEFAULT_CALENDAR` | Calendar for `add` when `--calendar` isn't given. Defaults to the system's default calendar. |
 | `EVENTKIT_DEFAULT_LIST` | Reminder list for `remind` when `--list` isn't given. Defaults to the system's default list. |
-| `EVENTKIT_MCP_SIGNATURE` | Text appended to the notes of events added through the MCP server. Defaults to `~ Added via eventkit-mcp`; set it to an empty string to turn signing off. |
+| `EVENTKIT_MCP_SIGNATURE` | Text appended to the notes of events added through the MCP server. Defaults to `~ Added via eventkit-mcp`. Several lines (separated by newlines, `\n` in JSON) rotate, one per event. Set it to an empty string to turn signing off. |
 | `EVENTKIT_BUNDLE_ID` | Bundle ID for the helper app, read by `bin/build-helper`. Letters, digits, dots, and hyphens only. |
 
 ## Using bin/cal
