@@ -60,76 +60,102 @@ The permission belongs to the helper, not to whoever launches it. Once EventKit 
 
 `mcp/server.py` uses only the Python standard library and speaks newline-delimited JSON-RPC over stdio.
 
-## Requirements
+## Quickstart
 
-- macOS 14 (Sonoma) or later
-- Swift toolchain: Xcode or the Command Line Tools (`xcode-select --install`)
-- Python 3.9 or later, for the MCP server
+### Requirements
 
-## Setup
+- macOS 14 (Sonoma) or later. The helper uses the full-access Calendar and Reminders APIs added in macOS 14.
+- A Swift compiler: the Xcode Command Line Tools (`xcode-select --install`) are enough; full Xcode works too.
+- Python 3.9 or later for the MCP server, standard library only. The Command Line Tools install one at `/usr/bin/python3`.
 
-1. Clone the repo and build the helper (bin/cal also rebuilds it whenever `src/cal.swift` is newer than the build):
+### 1. Clone and build the helper
 
-   ```bash
-   git clone <this repo> eventkit-mcp
-   cd eventkit-mcp
-   bin/build-helper
-   ```
+```bash
+git clone https://github.com/dvnrsn/eventkit-mcp.git
+cd eventkit-mcp
+bin/build-helper
+```
 
-2. Grant access. Run a read command for each area and click Allow on the prompts for "EventKit Helper":
+This compiles `src/cal.swift` into `build/EventKit Helper.app` and ad-hoc signs it. You don't have to rerun it: `bin/cal` rebuilds the helper whenever `src/cal.swift` is newer than the build. The checkout can live anywhere; `bin/cal` finds the helper relative to itself, and you can symlink `bin/cal` onto your `PATH`.
 
-   ```bash
-   bin/cal calendars
-   bin/cal reminder-lists
-   ```
+### 2. Grant Calendar and Reminders access
 
-   If you miss a prompt, turn the helper on under System Settings > Privacy & Security > Calendars (and Reminders). Each rebuild is a new ad-hoc signature, so macOS may ask again after `src/cal.swift` changes. The helper's bundle ID defaults to `local.eventkit-mcp.helper`; set `EVENTKIT_BUNDLE_ID` before building to use your own.
+Run one read command for each and click Allow on the prompt for "EventKit Helper":
 
-3. Register the MCP server.
+```bash
+bin/cal calendars
+bin/cal reminder-lists
+```
 
-   Claude Code:
+If you miss a prompt, turn EventKit Helper on under System Settings > Privacy & Security > Calendars (and Reminders), then run the command again. Each rebuild is a new ad-hoc signature, so macOS may ask again after `src/cal.swift` changes. `bin/cal` waits up to five minutes for a prompt to be answered.
 
-   ```bash
-   claude mcp add eventkit -- python3 "$PWD/mcp/server.py"
-   ```
+### 3. Try it
 
-   Claude desktop app: add it to `~/Library/Application Support/Claude/claude_desktop_config.json` and restart the app. Use absolute paths; the desktop app doesn't read your shell's `PATH`.
+```bash
+bin/cal list                  # today's events
+bin/cal reminders             # incomplete reminders
+```
 
-   ```json
-   {
-     "mcpServers": {
-       "eventkit": {
-         "command": "/usr/bin/python3",
-         "args": ["/absolute/path/to/eventkit-mcp/mcp/server.py"],
-         "env": {
-           "EVENTKIT_DEFAULT_CALENDAR": "Personal"
-         }
-       }
-     }
-   }
-   ```
+With no environment variables set, every calendar is visible, `add` uses the system's default calendar, `remind` uses the default list, and events added through the MCP server get a short neutral signature in their notes. See [Configuration](#configuration) to change any of that.
 
-4. Optionally, set up the example planner (below).
+### 4. Add the MCP server to your client
+
+Claude Code (`--scope user` makes it available in every project):
+
+```bash
+claude mcp add --scope user eventkit -- python3 /path/to/eventkit-mcp/mcp/server.py
+```
+
+Pass settings with `-e`, e.g. `claude mcp add --scope user -e EVENTKIT_CALENDARS=Personal eventkit -- python3 /path/to/eventkit-mcp/mcp/server.py`.
+
+Claude desktop app: add the server to `~/Library/Application Support/Claude/claude_desktop_config.json` (Settings > Developer > Edit Config opens it), then quit and reopen the app. Use absolute paths, since the desktop app doesn't read your shell's `PATH`. `/usr/bin/python3` is the Command Line Tools Python; use the output of `which python3` if you prefer another.
+
+```json
+{
+  "mcpServers": {
+    "eventkit": {
+      "command": "/usr/bin/python3",
+      "args": ["/path/to/eventkit-mcp/mcp/server.py"]
+    }
+  }
+}
+```
+
+Settings go in an `"env": { ... }` object next to `"args"`. Any other MCP client that can launch a stdio server works the same way: run `python3 /path/to/eventkit-mcp/mcp/server.py`.
+
+Keep the add, edit, and delete tools on "ask every time" in your client (see [Guardrails](#guardrails)).
+
+### 5. Optional: the example planner
+
+See [Example planner](#example-planner) below.
+
+### Troubleshooting
+
+- **"Calendars access denied" or "Reminders access denied":** allow EventKit Helper in System Settings > Privacy & Security, then retry.
+- **`swiftc: command not found` or an `xcrun` error:** install the Command Line Tools with `xcode-select --install`.
+- **The desktop app shows the server as failed:** check that both paths in the config are absolute and exist, and look at the logs in `~/Library/Logs/Claude/`.
+- **"No writable calendar named ...":** the name in `--calendar` or `EVENTKIT_DEFAULT_CALENDAR` must match one from `bin/cal calendars`; use `Account/Name` when two accounts share a name.
 
 ## Configuration
 
-All settings are environment variables, read by both `bin/cal` and the MCP server (which passes its environment through to `bin/cal`).
+All settings are environment variables, and all are optional. `bin/cal` reads them, and the MCP server passes its own environment through to `bin/cal`, so set them wherever you launch either one (your shell, or the client's MCP config).
 
 | Variable | Effect |
 | --- | --- |
 | `EVENTKIT_CALENDARS` | Comma-separated calendars to limit events to, e.g. to keep work calendars out. Each entry is a calendar name (`Personal`) or account and name (`Google/Personal`) when two accounts have a calendar of the same name. `list` shows only these, and `add`, `edit`, and `delete` refuse events and target calendars outside them. If an entry matches no calendar, event commands fail with the list of available calendars. Reminder lists aren't affected. |
-| `EVENTKIT_DEFAULT_CALENDAR` | Calendar for `add` when `--calendar` isn't given. Defaults to the system's default calendar. |
-| `EVENTKIT_DEFAULT_LIST` | Reminder list for `remind` when `--list` isn't given. Defaults to the system's default list. |
+| `EVENTKIT_DEFAULT_CALENDAR` | Calendar for `add` when `--calendar` isn't given. Defaults to the system's default calendar (the one marked `default` in `bin/cal calendars`). |
+| `EVENTKIT_DEFAULT_LIST` | Reminder list for `remind` when `--list` isn't given. Defaults to the system's default list (marked `default` in `bin/cal reminder-lists`). |
 | `EVENTKIT_MCP_SIGNATURE` | Text appended to the notes of events added through the MCP server. Defaults to `~ Added via eventkit-mcp`. Several lines (separated by newlines, `\n` in JSON) rotate, one per event. Set it to an empty string to turn signing off. |
-| `EVENTKIT_BUNDLE_ID` | Bundle ID for the helper app, read by `bin/build-helper`. Letters, digits, dots, and hyphens only. |
+| `EVENTKIT_BUNDLE_ID` | Bundle ID for the helper app, read by `bin/build-helper` (and so by `bin/cal` when it rebuilds). Defaults to `local.eventkit-mcp.helper`. Letters, digits, dots, and hyphens only. macOS ties the permission to it, so changing it means granting access again. |
+| `EVENTKIT_STATUS_FILE`, `EVENTKIT_PID_FILE` | Internal: `bin/cal` sets these for each run so it can wait for the helper. Don't set them yourself. |
 
 ## Using bin/cal
 
 ```console
 $ bin/cal add "Coffee with Sam" 2026-11-20 10:00 1h --alert 15m
-Added Fri Nov 20 10:00-11:00 Coffee with Sam (Home) [id: E2226C25-9510-49F9-A9CC-C2F70E66CB67:90F61F11-8B85-4FF9-A7DD-2BEEE90135F0]
+Added Fri Nov 20 10:00-11:00 Coffee with Sam (Personal) [id: 00000000-0000-0000-0000-000000000001:00000000-0000-0000-0000-000000000002]
 $ bin/cal list 2026-11-20 --match "Coffee"
-- 10:00-11:00 Coffee with Sam (Home)
+- 10:00-11:00 Coffee with Sam (Personal)
 ```
 
 Run `bin/cal` with no arguments for the full usage. Dates are `YYYY-MM-DD`, times are `7pm`, `7:30pm`, or `19:30`, and durations are `2h`, `90m`, or `1h30m`.
