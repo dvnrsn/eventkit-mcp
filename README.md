@@ -76,7 +76,7 @@ cd eventkit-mcp
 bin/build-helper
 ```
 
-This compiles `src/cal.swift` into `build/EventKit Helper.app` and ad-hoc signs it. You don't have to rerun it: `bin/cal` rebuilds the helper whenever `src/cal.swift` is newer than the build. The checkout can live anywhere; `bin/cal` finds the helper relative to itself, and you can symlink `bin/cal` onto your `PATH`.
+This compiles `src/cal.swift` into `build/EventKit Helper.app` and ad-hoc signs it (a "replacing existing signature" line is normal). You don't have to rerun it: `bin/cal` rebuilds the helper whenever `src/cal.swift` is newer than the build. The checkout can live anywhere; `bin/cal` finds the helper relative to itself, and you can symlink `bin/cal` onto your `PATH`.
 
 ### 2. Grant Calendar and Reminders access
 
@@ -106,7 +106,7 @@ Claude Code (`--scope user` makes it available in every project):
 claude mcp add --scope user eventkit -- python3 /path/to/eventkit-mcp/mcp/server.py
 ```
 
-Pass settings with `-e`, e.g. `claude mcp add --scope user -e EVENTKIT_CALENDARS=Personal eventkit -- python3 /path/to/eventkit-mcp/mcp/server.py`.
+Pass settings with `-e` after the server name (it takes several values, so a name after it would be read as one), e.g. `claude mcp add --scope user eventkit -e EVENTKIT_CALENDARS=Personal -- python3 /path/to/eventkit-mcp/mcp/server.py`. Check it with `claude mcp list`.
 
 Claude desktop app: add the server to `~/Library/Application Support/Claude/claude_desktop_config.json` (Settings > Developer > Edit Config opens it), then quit and reopen the app. Use absolute paths, since the desktop app doesn't read your shell's `PATH`. `/usr/bin/python3` is the Command Line Tools Python; use the output of `which python3` if you prefer another.
 
