@@ -5,14 +5,15 @@ let usage = """
 usage:
   bin/cal list [DATE] [--to DATE] [--match TEXT] [--ids]
   bin/cal calendars
-  bin/cal add "Title" DATE [TIME [DURATION]] [details] [--repeat FREQ [--every N] [--until DATE]]
+  bin/cal add "Title" DATE [TIME [DURATION]] [details] [--repeat FREQ [--every N] [--on NTH] [--until DATE]]
   bin/cal edit ID DATE [--title T] [--date DATE] [--time TIME] [--duration D] [--all-day] [details]
                        [--series [--confirm-series TITLE]]
   bin/cal delete ID DATE [--series [--confirm-series TITLE]]
 
   bin/cal reminders [--list NAME] [--due-by DATE] [--completed] [--match TEXT] [--ids]
   bin/cal reminder-lists
-  bin/cal remind "Title" [DATE [TIME]] [--list NAME] [--notes TEXT] [--priority P] [--repeat FREQ [--until DATE]]
+  bin/cal remind "Title" [DATE [TIME]] [--list NAME] [--notes TEXT] [--priority P]
+                     [--repeat FREQ [--every N] [--on NTH] [--until DATE]]
   bin/cal edit-reminder ID [--title T] [--due DATE] [--time TIME] [--no-due] [--done] [--undone]
                            [--list NAME] [--notes TEXT] [--priority P]
   bin/cal delete-reminder ID
@@ -23,6 +24,8 @@ usage:
   details   --calendar NAME  --location TEXT  --notes TEXT  --alert 15m|none
             on edit, --notes replaces the existing notes and --alert replaces existing alerts
   FREQ      daily, weekly, monthly, or yearly; --every 2 with weekly is every other week
+  NTH       with --repeat monthly, repeat on a weekday of the month instead of the date:
+            2mon, second-monday, "second monday", last-fri; DATE must be that day
   ID DATE   from `list --ids`; DATE picks the occurrence of a repeating event
   --series  edit or delete this and all future occurrences, not just this one;
             --confirm-series refuses unless TITLE is exactly the event's current title
@@ -57,7 +60,7 @@ func fail(_ message: String) -> Never {
 
 let valueFlags: Set<String> = [
     "--to", "--match", "--title", "--date", "--time", "--duration",
-    "--calendar", "--location", "--notes", "--alert", "--repeat", "--every", "--until",
+    "--calendar", "--location", "--notes", "--alert", "--repeat", "--every", "--on", "--until",
     "--list", "--due-by", "--due", "--priority", "--confirm-series",
 ]
 let switchFlags: Set<String> = ["--ids", "--all-day", "--series", "--completed", "--no-due", "--done", "--undone"]
@@ -276,13 +279,66 @@ func applyDetails(to event: EKEvent) {
     }
 }
 
-func recurrenceRule() -> EKRecurrenceRule? {
-    guard let repeatText = options["--repeat"] else { return nil }
+let ordinals: [String: Int] = [
+    "1": 1, "1st": 1, "first": 1, "2": 2, "2nd": 2, "second": 2, "3": 3, "3rd": 3, "third": 3,
+    "4": 4, "4th": 4, "fourth": 4, "5": 5, "5th": 5, "fifth": 5, "-1": -1, "last": -1,
+]
+let weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+let ordinalNames = [-1: "last", 1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth"]
+
+// Returns (weekday 1=Sunday...7=Saturday, week of month 1...5 or -1 for last).
+func parseNth(_ text: String) -> (weekday: Int, week: Int) {
+    let pattern = try! NSRegularExpression(pattern: "^(-1|[1-5](?:st|nd|rd|th)?|first|second|third|fourth|fifth|last)[\\s-]*([a-z]+)$")
+    let lower = text.lowercased().trimmingCharacters(in: .whitespaces)
+    if let match = pattern.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)),
+       let ordinalRange = Range(match.range(at: 1), in: lower),
+       let dayRange = Range(match.range(at: 2), in: lower),
+       let week = ordinals[String(lower[ordinalRange])] {
+        let day = String(lower[dayRange])
+        if day.count >= 3, let index = weekdayNames.firstIndex(where: { $0.lowercased().hasPrefix(day) }) {
+            return (index + 1, week)
+        }
+    }
+    fail("Can't read --on \"\(text)\"; use e.g. 2mon, second-monday, or last-fri.")
+}
+
+func nthWeekday(of day: Date) -> (weekday: Int, week: Int, isLast: Bool) {
+    let weekday = calendar.component(.weekday, from: day)
+    let week = (calendar.component(.day, from: day) - 1) / 7 + 1
+    let isLast = calendar.component(.month, from: calendar.date(byAdding: .day, value: 7, to: day)!)
+        != calendar.component(.month, from: day)
+    return (weekday, week, isLast)
+}
+
+func recurrenceRule(startingOn start: Date?) -> EKRecurrenceRule? {
+    guard let repeatText = options["--repeat"] else {
+        if options["--on"] != nil { fail("--on needs --repeat monthly.") }
+        return nil
+    }
     let frequencies: [String: EKRecurrenceFrequency] = ["daily": .daily, "weekly": .weekly, "monthly": .monthly, "yearly": .yearly]
     guard let frequency = frequencies[repeatText] else { fail("--repeat must be daily, weekly, monthly, or yearly.") }
     let end = options["--until"].map { EKRecurrenceEnd(end: nextDay(parseDay($0))) }
     guard let interval = Int(options["--every"] ?? "1"), interval > 0 else { fail("--every must be a positive number.") }
-    return EKRecurrenceRule(recurrenceWith: frequency, interval: interval, end: end)
+    guard let onText = options["--on"] else {
+        return EKRecurrenceRule(recurrenceWith: frequency, interval: interval, end: end)
+    }
+    guard frequency == .monthly else { fail("--on only works with --repeat monthly.") }
+    let nth = parseNth(onText)
+    // EventKit always keeps the start date as the first occurrence, so a start off the pattern
+    // would add a stray extra one.
+    if let start {
+        let actual = nthWeekday(of: start)
+        let matches = actual.weekday == nth.weekday && (nth.week == -1 ? actual.isLast : actual.week == nth.week)
+        guard matches else {
+            fail("\(formatDay(start)) is not the \(ordinalNames[nth.week]!) \(weekdayNames[nth.weekday - 1]) of its month; "
+                + "start the repeat on one that is. Nothing changed.")
+        }
+    }
+    let day = EKRecurrenceDayOfWeek(EKWeekday(rawValue: nth.weekday)!, weekNumber: nth.week)
+    return EKRecurrenceRule(
+        recurrenceWith: .monthly, interval: interval, daysOfTheWeek: [day],
+        daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil,
+        setPositions: nil, end: end)
 }
 
 func save(_ event: EKEvent) {
@@ -344,7 +400,7 @@ func add() {
     }
     applyDetails(to: event)
     requireAllowed(event.calendar)
-    if let rule = recurrenceRule() { event.addRecurrenceRule(rule) }
+    if let rule = recurrenceRule(startingOn: day) { event.addRecurrenceRule(rule) }
     save(event)
     print("Added " + describe(event, withDay: true, withID: true).dropFirst(2))
 }
@@ -546,7 +602,7 @@ func remind() {
     }
     if args.count >= 2 { setDue(item, day: parseDay(args[1]), time: args.count == 3 ? args[2] : nil) }
     applyReminderDetails(to: item)
-    if let rule = recurrenceRule() {
+    if let rule = recurrenceRule(startingOn: dueDate(of: item)) {
         guard item.dueDateComponents != nil else { fail("A repeating reminder needs a due date.") }
         item.addRecurrenceRule(rule)
     }

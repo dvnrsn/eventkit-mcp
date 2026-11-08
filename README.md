@@ -22,6 +22,7 @@ Your MCP client's approval prompt is the real backstop. Keep `add_event`, `edit_
 - **The line must match.** `edit_event`, `delete_event`, `edit_reminder`, and `delete_reminder` take an ID plus the item's line exactly as the listing printed it, e.g. `12:00-13:00 Lunch @ Cafe (Personal)`. Before running anything, the server lists that day again and compares. If the ID points at a different item (an ID mix-up), or the item changed since it was listed, the call is refused with the current line and nothing changes. Because the line is a tool argument, it also shows up in the approval prompt, so you see what is being changed rather than an opaque ID. Every listed item is exactly one line: line breaks and control characters in titles, locations, and calendar names are printed as spaces.
 - **Series changes need the title.** Edits and deletes of repeating events touch only the given occurrence. `series=true` (this and all future occurrences) is refused unless `confirm_series` is also passed and equals the event's exact current title. Messages about a repeating event name the occurrence date that was targeted.
 - **Calendar limits.** When `EVENTKIT_CALENDARS` is set, events in other calendars can't be listed, added, moved into, edited, or deleted, and a configured name that matches no calendar is an error rather than a silent no-op.
+- **Repeat patterns must fit the start.** `--on` (the `on` field in the MCP tools) repeats monthly on a weekday of the month, like `2mon` or `last-fri`, and is refused unless the start date is that weekday. EventKit always keeps the start date as the first occurrence, so a mismatched start would add a stray extra one.
 - **Arguments stay arguments.** A title or other value that starts with `--` is passed as a value, never read as an option.
 
 **Instructions to the model**, which a well-behaved model follows but nothing enforces:
@@ -141,6 +142,7 @@ bin/cal calendars                             # calendars, read-only ones, and t
 
 bin/cal add "Lunch with Sam" 2026-10-20 12pm 1h30m --location "Cafe" --alert 15m
 bin/cal add "Team retro" 2026-10-21 4pm --repeat weekly --every 2 --until 2026-12-31
+bin/cal add "Planning session" 2026-11-09 9am --repeat monthly --on 2mon   # second Monday of each month
 bin/cal add "Holiday" 2026-12-25                         # all-day
 bin/cal edit <ID> 2026-10-20 --time 1pm --duration 1h    # move one occurrence
 bin/cal delete <ID> 2026-10-21 --series                  # this and all future occurrences
@@ -148,6 +150,7 @@ bin/cal add -- "--> Pick up keys" 2026-10-22 9am        # after a bare --, every
 
 bin/cal reminders --due-by 2026-10-24
 bin/cal remind "Renew passport" 2026-11-01 9am --priority high
+bin/cal remind "Back up laptop" 2026-11-27 --repeat monthly --on last-fri
 bin/cal edit-reminder <ID> --done
 bin/cal delete-reminder <ID>
 ```

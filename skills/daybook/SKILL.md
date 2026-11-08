@@ -26,7 +26,7 @@ Planner repo: `~/planner` (edit this line if yours lives elsewhere). It holds `d
 `bin/cal` (run with no arguments for usage) does everything: `list [DATE] [--to DATE] [--match TEXT] [--ids]`, `calendars`, `add`, `edit ID DATE`, `delete ID DATE`.
 
 - **Look up:** resolve relative dates against today and use `list`, with `--to` for ranges and `--match` to find an event by title.
-- **Add:** build `bin/cal add "<Title>" <YYYY-MM-DD> [<time> [<duration>]]` plus any of `--calendar`, `--location`, `--notes`, `--alert 15m`, `--repeat weekly [--until DATE]`. No time means all-day; no duration means 1h.
+- **Add:** build `bin/cal add "<Title>" <YYYY-MM-DD> [<time> [<duration>]]` plus any of `--calendar`, `--location`, `--notes`, `--alert 15m`, `--repeat weekly [--until DATE]` (or `--repeat monthly --on 2mon` for the second Monday of each month; DATE must be that day). No time means all-day; no duration means 1h.
 - **Move, change, cancel:** first run `list <DATE> --match "<words>" --ids` to get the event's ID. If it matches zero or several events, show what you found and ask; never guess. Then `edit <ID> <DATE>` with `--date`, `--time`, `--duration`, `--title`, `--all-day`, or detail options, or `delete <ID> <DATE>`.
 - **Overlaps:** when adding something that overlaps an existing event, point it out before asking for the yes.
 - **Repeating events:** change or delete only that occurrence. Add `--series` (this and all future occurrences) only when the user says so explicitly, together with `--confirm-series "<exact title>"` so the helper refuses if the ID points at a different event.
@@ -35,7 +35,7 @@ Planner repo: `~/planner` (edit this line if yours lives elsewhere). It holds `d
 
 ## Reminders
 
-Also `bin/cal`: `reminders [--list NAME] [--due-by DATE] [--completed] [--match TEXT] [--ids]`, `reminder-lists`, `remind "<Title>" [DATE [TIME]] [--list] [--notes] [--priority high|medium|low|none] [--repeat FREQ [--until DATE]]`, `edit-reminder ID [--title] [--due DATE] [--time TIME] [--no-due] [--done] [--undone] [--list] [--notes] [--priority]`, `delete-reminder ID`.
+Also `bin/cal`: `reminders [--list NAME] [--due-by DATE] [--completed] [--match TEXT] [--ids]`, `reminder-lists`, `remind "<Title>" [DATE [TIME]] [--list] [--notes] [--priority high|medium|low|none] [--repeat FREQ [--on NTH] [--until DATE]]`, `edit-reminder ID [--title] [--due DATE] [--time TIME] [--no-due] [--done] [--undone] [--list] [--notes] [--priority]`, `delete-reminder ID`.
 
 - "Remind me to X [when]" → `remind`. A due time also sets an alert at that time. Adding one the user asked for, or marking one done, needs no extra confirmation.
 - Find a reminder by `reminders --match "<words>" --ids` before editing or deleting it; ask if zero or several match.

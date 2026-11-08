@@ -44,6 +44,11 @@ INSTRUCTIONS = (
 DATE = {"type": "string", "description": "YYYY-MM-DD"}
 TIME = {"type": "string", "description": "7pm, 7:30pm, or 19:30"}
 DURATION = {"type": "string", "description": "2h, 90m, or 1h30m"}
+ON = {
+    "type": "string",
+    "description": "With repeat=monthly, repeat on a weekday of the month instead of the date, e.g. 2mon "
+    "(second Monday) or last-fri. The date must itself be that day.",
+}
 PRIORITY = {"type": "string", "enum": ["high", "medium", "low", "none"]}
 EVENT_LINE = {
     "type": "string",
@@ -108,6 +113,7 @@ TOOLS = [
                 "duration": DURATION,
                 **DETAILS,
                 "repeat": {"type": "string", "enum": ["daily", "weekly", "monthly", "yearly"]},
+                "on": ON,
                 "until": {**DATE, "description": "Last day of the repeat, YYYY-MM-DD"},
             },
             "required": ["title", "date"],
@@ -192,6 +198,7 @@ TOOLS = [
                 "notes": {"type": "string"},
                 "priority": PRIORITY,
                 "repeat": {"type": "string", "enum": ["daily", "weekly", "monthly", "yearly"], "description": "Needs due_date"},
+                "on": ON,
                 "until": {**DATE, "description": "Last day of the repeat, YYYY-MM-DD"},
             },
             "required": ["title"],
@@ -286,6 +293,8 @@ def cal_parts(name, a):
             if a.get("duration"):
                 positional.append(a["duration"])
         flags = detail_args(a)
+        if a.get("on"):
+            flags += ["--on", a["on"]]
         if a.get("repeat"):
             flags += ["--repeat", a["repeat"]]
             if a.get("until"):
@@ -324,6 +333,8 @@ def cal_parts(name, a):
             if a.get("time"):
                 positional.append(a["time"])
         flags = reminder_detail_args(a)
+        if a.get("on"):
+            flags += ["--on", a["on"]]
         if a.get("repeat"):
             flags += ["--repeat", a["repeat"]]
             if a.get("until"):
